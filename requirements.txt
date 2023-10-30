@@ -1,4 +1,0 @@
-chardet
-requests
-pillow
-pynput
