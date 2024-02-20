@@ -2,10 +2,10 @@ from socket import socket, AF_INET, AF_INET6, SOCK_STREAM, gethostname, gethostb
 from json import loads, dumps  # json解析和封装
 from threading import Thread  # 多线程
 from sys import argv  # 命令行参数
-from time import strftime, time, gmtime, sleep  # 格式化的时间
+from time import strftime, time, localtime, sleep  # 格式化的时间
 from platform import system as getOS
+Win = getOS() == 'Windows'
 from mimetypes import guess_type
-# 命令行：color、title
 from os import getcwd, system, rename, remove, path, chdir, makedirs, scandir,_exit
 from shutil import rmtree
 from urllib.parse import unquote
@@ -14,24 +14,38 @@ from re import sub
 from chardet import detect
 from hashlib import sha1  # 建立websocket时握手需要，真tm没事找事做
 from base64 import b64encode
-from requests import get # 其实可以socket，但我不想弄SSL
+from requests import get,post # 其实可以socket，但我不想弄SSL
 from PIL import ImageGrab
 from io import BytesIO
+from struct import pack as strPack
+from traceback import format_exc as fexc
+import wave
 # 以下为windows用，linux不行
-from pynput import mouse,keyboard
-from win32api import GetConsoleTitle
-from win32gui import FindWindow,ShowWindow
-TM = FindWindow(0,GetConsoleTitle())
-ShowWindow(TM,0)
+if Win:
+    system("color")  # Windows CMD 颜色刷新
+    from win32api import GetConsoleTitle
+    from win32gui import FindWindow,ShowWindow
+    TM = FindWindow(0,GetConsoleTitle())
+    from ctypes import windll
+    windll.shcore.SetProcessDpiAwareness(2)
+    windll.kernel32.SetThreadExecutionState(0x80000001)
+    from pynput import mouse,keyboard
+    from pyaudio import PyAudio
+    Mouse = mouse.Controller()
+    Key = keyboard.Controller()
+# 任务：历史记录（js）
+# 播放器播放列表，连续播放（js）
+# 上传 保存 断点续传 多线程传输（服务端）
+
 ST = 0
 Lim = 300*1024*1024
-def showTM():
-    global ST
-    ST = 0 if ST==9 else 9
-    ShowWindow(TM,ST)
+def showTM()-> None:
+    if Win:
+        global ST
+        ST = 0 if ST==9 else 9
+        ShowWindow(TM,ST)
+Hosts = {}
 # ShowWindow(HWND,int状态码0代表隐藏窗口)
-Mouse = mouse.Controller()
-Key = keyboard.Controller()
 Magic = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 # 默认监听 0.0.0.0:80 改成 127.0.0.1的话需要在主函数中修改
 Buffer = 1024
@@ -43,6 +57,7 @@ ADDRESS = ('0.0.0.0', port)  # 绑定地址 绑定失败会抛出异常: OSError
 PWD = 981350 # 密码
 PWD = str(PWD ^ 0x66666666)
 noPWD = False
+Sub = 0
 i = __file__.rfind('\\')
 if i<0:i = __file__.rfind('/')
 if i>0:chdir(__file__[:i])
@@ -51,19 +66,9 @@ Tokens = {}
 Share = None # 共享地址(不用密码)
 rmtIMG = BytesIO()
 SL = 0
-Win = getOS()
 B = [1, 256, 256**2, 256**3, 256**4, 256**5, 256**6, 256**7]
 LOG = True
 AutoSleep = False
-if Win == 'Windows':
-    Win = True
-    from ctypes import windll
-    windll.shcore.SetProcessDpiAwareness(2)
-    windll.kernel32.SetThreadExecutionState(0x80000001)
-else:
-    Win = False
-if Win:
-    system("color")  # Windows CMD 颜色刷新
 socket_server = None  # 负责监听的socket
 conn_pool = []  # 连接池
 ip_pool = {} #ip 池 限制同一ip连接数不超过16个，以及记录密码错误
@@ -92,7 +97,7 @@ __err = '\033[1;31mError\033[0m  '
 CTjson = {"Content-Type": "application/json; charset=utf-8"}
 
 
-def Help():
+def Help() -> str:
     s = ''
     if socket_server:
         hostname = gethostname()
@@ -109,6 +114,27 @@ def Help():
 
 
 Head = {"Host": "opqnext.com", "Pragma": "no-cache", "Referer": "http://opqnext.com/", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 Edg/116.0.1938.62}"}
+class WAV:
+    def __init__(self) -> None:
+        self.file = BytesIO()
+        self.audio = PyAudio()
+        self.rec = self.audio.open(format=16,channels=1,rate=20000,input=True,frames_per_buffer=1024)
+    def play(self,dat=b'')->None:
+        pf = BytesIO()
+        pf.write(dat)
+        pf.seek(0) # 位置回到开头
+        w = wave.open(pf,'rb')
+        p = self.audio.open(format=self.audio.get_format_from_width(w.getsampwidth()),channels=w.getnchannels(),rate=w.getframerate(),output=True)
+        while len(data := w.readframes(1024)):
+            p.write(data)
+        p.close()
+        pf.close()
+    def record(self,cli):
+        if not self.rec.is_active():
+            self.rec.start_stream()
+        pass
+
+        
 
 class IP:
     def __init__(self,addr) -> None:
@@ -116,7 +142,7 @@ class IP:
         self.qpwd = 0
         self.lastqpwd = 0
         self.conn = 0
-def getLrcList(q, singer=''):
+def getLrcList(q, singer='') -> list:
     r = get('http://opqnext.com/search.html?q=' + q+' '+singer, headers=Head).text
     s = r.find('<div class="media position-relative">')
     e = r.rfind('"content_right"')-74
@@ -158,14 +184,14 @@ def getLrcList(q, singer=''):
     return res
 
 
-def getLrc(u):
+def getLrc(u)-> str:
     r = get(u, headers=Head).text
     s = r.find('lyric-textarea" rows="12">')+26
     e = r.find('</textarea>', s)
     return r[s:e]
 
 
-def Lrc(p):
+def Lrc(p)->list:
     s = p.rfind('/')
     if s < 0:
         s = p.rfind('\\')
@@ -181,11 +207,11 @@ class Chat:
         self.chat = []
         self.clients = {}
 
-    def con(self, ip, client):
+    def con(self, ip, client)->None:
         log('Chat   %-21s connected' % (ip))
         self.clients[ip] = client
 
-    def push(self, dat={'name': '', 'chat': ''}, ip=''):
+    def push(self, dat={'name': '', 'chat': ''}, ip='')->None:
         dat['ip'] = ip
         dat['time'] = time()
         self.chat.append(dat)
@@ -196,12 +222,12 @@ class Chat:
         except:
             pass
 
-    def get(self, client, t=0):
+    def get(self, client, t=0)->None:
         for i in self.chat:
             if i['time'] > t:
                 client.socket.send(packMes(dumps(i)))
 
-    def close(self, ip):
+    def close(self, ip)->None:
         log('Chat   %-21s disconnected' % (ip))
         self.clients.pop(ip)
 
@@ -222,13 +248,14 @@ class Client:
         self.path = None
         ip_pool[self.host].conn+=1
 
-    def close(self, client=0):
+    def close(self, client=0)->None:
         self.open = False
         self.socket.close()
         ip_pool[self.host].conn-=1
         if self.file:
-            self.file.close()
-        if self.ws:
+            if self.ws==':tlcm':self.file.delete()
+            else:self.file.close()
+        if self.ws==':chat':
             CHAT.close(self.address)
         if client:
             client.req_pool.remove(self)
@@ -237,7 +264,7 @@ class Client:
         log('Client %-21s disconnected' % (self.address))
 
 
-def toutf(s=b''):
+def toutf(s=b'')->bytes:
     # 因为Popen的编码问题设计的函数，后来直接通过其参数encoding解决了
     if not isinstance(s, bytes):
         s = s.encode('utf-8')
@@ -247,7 +274,7 @@ def toutf(s=b''):
     return s
 
 
-def Kill(proc, timeout, client):
+def Kill(proc, timeout, client)->None:
     sleep(timeout)
     proc.kill()
     if proc.poll() == None:
@@ -257,23 +284,23 @@ def Kill(proc, timeout, client):
         client.close()
 
 
-def newkill(proc, client, timeout=5):
+def newkill(proc, client, timeout=5)->None:
     thr = Thread(target=Kill, args=(proc, timeout, client,))
     thr.start()
 
 
-def T():
+def T()->str:
     sec = str(time())
     sec = sec[sec.find('.'):][:4]
     return strftime('[%H:%M:%S'+sec+'] ')
 
 
-def log(s):
+def log(s)->None:
     if LOG:
         print(T()+s+'\n', end='')
 
 
-def parse_url(url=''):
+def parse_url(url='')->object:
     res = {"port": 80, "path": "/"}
     i = url.find('://', 0, 10)
     if i > 0:
@@ -294,7 +321,7 @@ def parse_url(url=''):
         res['host'] = url[:s]
     return res
 
-def parse_head(head=b''):
+def parse_head(head=b'')->object:
     header = {}
     if isinstance(head, bytes):
         head = head.decode()
@@ -332,7 +359,7 @@ def parse_head(head=b''):
     return header
 
 
-def pack(method='', url='', header={}, data='', res=''):
+def pack(method='', url='', header={}, data='', res='')->bytes:
     # 打包完整的 HTTP 请求
     dat = r''
     if res:
@@ -367,7 +394,7 @@ def pack(method='', url='', header={}, data='', res=''):
     return dat.encode()+data
 
 
-def packMes(d=b'',text = True):
+def packMes(d=b'',text = True)->bytes:
     if not isinstance(d, bytes):
         d = d.encode()
     dat = b'\x81' if text else b'\x82'
@@ -382,7 +409,7 @@ def packMes(d=b'',text = True):
     return dat
 
 
-def getLen(m=b''):
+def getLen(m=b'')->tuple:
     offset = 2
     # fin = m[0]&0b10000000 # 假设全部正确
     # mask = m[1] & 0b10000000 # 掩码：客户端来的消息必须经过格式化=1，向客户端发送帧时，不要对其进行掩码
@@ -398,7 +425,7 @@ def getLen(m=b''):
     return (msglen, offset)
 
 
-def parseMes(m=b'', msglen=0, offset=0):
+def parseMes(m=b'', msglen=0, offset=0)->bytes:
     dec = b''
     if msglen != 0:
         masks = m[offset:offset+4]
@@ -423,12 +450,12 @@ for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
     if path.isdir(disk):
         Diskdir['folder'].append({"name": disk, "mtime": "", "mts": ""})
 
-def checkPWD(p=''):
+def checkPWD(p='')->bool:
     p = str(p)
     return noPWD or p==PWD or Tokens.get(p,0)>0
 
 
-def getFile(loc, head=False, rang='', pETag='', token=0):
+def getFile(loc, head=False, rang='', pETag='', token=0)->bytes:
     resp = UnknownErr
     if rang:
         rang = rang[rang.find('=')+1:]
@@ -468,8 +495,11 @@ def getFile(loc, head=False, rang='', pETag='', token=0):
             filelist = scandir(loc)
             dir = {'folder': [], 'file': [], 'dir': loc.replace('\\', '/')}
             for i in filelist:
-                s = i.stat()
-                f = {'name': i.name, 'mtime': s.st_mtime, 'mts': strftime('%Y/%m/%d %H:%M', gmtime(s.st_mtime))[2:]}
+                try:
+                    s = i.stat()
+                except:
+                    next
+                f = {'name': i.name, 'mtime': s.st_mtime, 'mts': strftime('%Y/%m/%d %H:%M', localtime(s.st_mtime))[2:]}
                 if i.is_file():
                     f['size'] = s.st_size
                     f['type'] = guess_type(i.name)[0]
@@ -480,7 +510,7 @@ def getFile(loc, head=False, rang='', pETag='', token=0):
                     dir['folder'].append(f)
             resp = pack(res='HTTP/1.1 200 OK', header=CTjson, data=dumps(dir))
         except Exception as e:
-            resp = pack(res="HTTP/1.1 400 Bad Request", header=CTjson, data=dumps({"code": 400, "message": str(e)}))
+            resp = pack(res="HTTP/1.1 400 Bad Request", header=CTjson, data=dumps({"code": 400, "message": str(e),"trace":fexc()}))
     elif path.isfile(loc):
         if loc.find(Local)!=0 and not checkPWD(token) and loc[:SL]!=Share:
             return pwdErr
@@ -489,7 +519,7 @@ def getFile(loc, head=False, rang='', pETag='', token=0):
             cache = False
         curMod = path.getmtime(loc)
         ETag = f'W/"{size}-{curMod}"'
-        header = {'Content-Length': size, 'Content-Type': guess_type(loc)[0], 'Accept-Ranges': 'bytes', 'Last-Modified': strftime('%a, %d %b %Y %H:%M:%S GMT', gmtime(curMod)), "Cache-Control": "public, max-age=31536000", 'ETag': ETag}
+        header = {'Content-Length': size, 'Content-Type': guess_type(loc)[0], 'Accept-Ranges': 'bytes', 'Last-Modified': strftime('%a, %d %b %Y %H:%M:%S GMT', localtime(curMod)), "Cache-Control": "public, max-age=31536000", 'ETag': ETag}
         if pETag == ETag:
             resp = pack(res='HTTP/1.1 304 Not Modified', header=header)
         elif head:
@@ -504,7 +534,7 @@ def getFile(loc, head=False, rang='', pETag='', token=0):
                 elif rang[1] == '':
                     rang[0] = int(rang[0])
                     maxs = rang[0]+2097151  # 2Mb
-                    rang[1] = size-1 if (not cache) or size - rang[0] < maxs else rang[0]+maxs
+                    rang[1] = size-1 if (not cache) or size - rang[0] < maxs else maxs
                 else:
                     rang[0] = int(rang[0])
                     rang[1] = int(rang[1])
@@ -540,7 +570,7 @@ def getFile(loc, head=False, rang='', pETag='', token=0):
                 if not cache:
                     file.close()
             except Exception as e:
-                resp = pack(res="HTTP/1.1 400 Bad Request", header=CTjson, data=dumps({"code": 400, "message": str(e)}))
+                resp = pack(res="HTTP/1.1 400 Bad Request", header=CTjson, data=dumps({"code": 400, "message": str(e),"trace":fexc()}))
                 log('\033[1;33m%-7s\033[0m%-21s %s' % ('GET', (rg if rg else 'whole') +
                     ('  HEAD' if head else ''), loc+" Fail: "+str(e)))
     else:
@@ -548,8 +578,7 @@ def getFile(loc, head=False, rang='', pETag='', token=0):
         log('\033[1;33m%-7s\033[0m%-21s %s' % ('GET', (rg if rg else 'whole')+('  HEAD' if head else ''), loc+" Not Found"))
     return resp
 
-
-def accept_client():
+def accept_client()->None:
     # 线程1：监听连接
     while True:
         try:
@@ -572,10 +601,11 @@ def accept_client():
         thread.setDaemon(True)
         thread.start()
 
-def message_handle(client):
+def message_handle(client)->None:
     log('Client %-21s connected' % (client.address))
     # 循环等待请求
     msg = 'Unknown Error'
+    trc = ''
     wsl = (0, 0)
     while client.open:
         resp = ''
@@ -623,58 +653,68 @@ def message_handle(client):
                 client.close()
             elif (wsl[0]):
                 try:
-                    # 收发数据还是以json格式 {name:,chat,time}
-                    dat = dat.decode()
-                    dat = loads(dat)
-                    if dat.get('frame')!=None:
-                        img = ImageGrab.grab()
-                        rmtIMG.seek(0)
-                        img.save(rmtIMG,"JPEG")
-                        rmtIMG.seek(0)
-                        client.socket.send(packMes(rmtIMG.read(),0))
-                    elif dat.get('control'):
-                        typ = dat.get('type')
-                        xy = dat.get('xy')
-                        key = dat.get('key')
-                        if xy:
-                            xy = (xy[0],xy[1])
-                        if typ=='move':
-                            Mouse.position = xy
-                        elif typ=='click':
-                            Mouse.position = xy
-                            Mouse.click(mouse.Button.left)
-                        elif typ=='wheel':
-                            Mouse.position = xy
-                            dxy = dat.get('dxy',[0,0])
-                            Mouse.scroll(dxy[0],dxy[1])
-                        elif typ=='mousedown':
-                            Mouse.position = xy
-                            Mouse.press(mouse.Button.left)
-                        elif typ=='mouseup':
-                            Mouse.position = xy
-                            Mouse.release(mouse.Button.left)
-                        elif typ=='context':
-                            Mouse.position = xy
-                            Mouse.press(mouse.Button.right)
-                            Mouse.release(mouse.Button.right)
-                        elif typ=='keydown':
-                            if len(key)>1:
-                                Key.press(keyboard.Key.__getitem__(key))
-                            else: Key.press(key)
-                        elif typ=='keyup':
-                            if len(key)>1:
-                                Key.release(keyboard.Key.__getitem__(key))
-                            else: Key.release(key)
-                        elif typ=='tap':
-                            if len(key)>1:
-                                Key.tap(keyboard.Key.__getitem__(key))
-                            else: Key.tap(key)
-                    elif dat.get('time', -1) != -1:
-                        CHAT.get(client, dat['time'])
-                    elif dat.get('chat'):
-                        CHAT.push(dat, client.address)
+                    if client.ws == ':remote' and Win:
+                        # 收发数据还是以json格式 {name:,chat,time}
+                        dat = dat.decode()
+                        dat = loads(dat)
+                        if dat.get('frame')!=None:
+                            img = ImageGrab.grab()
+                            rmtIMG.seek(0)
+                            img.save(rmtIMG,"JPEG")
+                            rmtIMG.seek(0)
+                            client.socket.send(packMes(rmtIMG.read(),0))
+                        elif dat.get('control'):
+                            typ = dat.get('type')
+                            xy = dat.get('xy')
+                            key = dat.get('key')
+                            if xy:
+                                xy = (xy[0],xy[1])
+                            if typ=='move':
+                                Mouse.position = xy
+                            elif typ=='click':
+                                Mouse.position = xy
+                                Mouse.click(mouse.Button.left)
+                            elif typ=='wheel':
+                                Mouse.position = xy
+                                dxy = dat.get('dxy',[0,0])
+                                Mouse.scroll(dxy[0],dxy[1])
+                            elif typ=='mousedown':
+                                Mouse.position = xy
+                                Mouse.press(mouse.Button.left)
+                            elif typ=='mouseup':
+                                Mouse.position = xy
+                                Mouse.release(mouse.Button.left)
+                            elif typ=='context':
+                                Mouse.position = xy
+                                Mouse.press(mouse.Button.right)
+                                Mouse.release(mouse.Button.right)
+                            elif typ=='keydown':
+                                if len(key)>1:
+                                    Key.press(keyboard.Key.__getitem__(key))
+                                else: Key.press(key)
+                            elif typ=='keyup':
+                                if len(key)>1:
+                                    Key.release(keyboard.Key.__getitem__(key))
+                                else: Key.release(key)
+                            elif typ=='tap':
+                                if len(key)>1:
+                                    Key.tap(keyboard.Key.__getitem__(key))
+                                else: Key.tap(key)
+                    elif client.ws==':chat' : 
+                        dat = dat.decode()
+                        dat = loads(dat)
+                        if dat.get('time', -1) != -1:
+                            CHAT.get(client, dat['time'])
+                        elif dat.get('chat'):
+                            CHAT.push(dat, client.address)
+                    elif client.ws==':tlcm':
+                        print('rec')
+                        f = client.file.read()
+                        client.socket.send(packMes(strPack("h" * len(f), *f)))
+                        # 传递录制帧
+                        pass
                 except Exception as e:
-                    client.socket.send(packMes(dumps({'message': 'Error: '+str(e)})))
+                    client.socket.send(packMes(dumps({'message': 'Error: '+fexc()})))
             else:
                 client.socket.send(b'\x880')
                 client.close()
@@ -684,11 +724,17 @@ def message_handle(client):
         data = data[m+4:]
         if head['Method'].upper() == "GET":
             if head.get('Upgrade') == 'websocket':
-                if head['path'] == ':chat' or (head['path']==':remote' and checkPWD(head['token'])):
-                    client.ws = head['path']
+                tp = head['path']
+                if tp == ':chat' or (tp==':remote' or tp==':tlcm' and checkPWD(head['token'])):
+                    client.ws = tp
+                    if tp==':tlcm':
+                        print(tp)
+                        client.file = PvRecorder(frame_length=512)
+                        client.file.start()
+                        wave.open(WAV,'wb')
+                    elif tp==':chat':CHAT.con(client.address, client)
                     key = head.get('Sec-WebSocket-Key').encode()+Magic
                     key = b64encode(sha1(key).digest())
-                    CHAT.con(client.address, client)
                     resp = b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nServer: WebSocket++/0.7.0\r\nSec-WebSocket-Accept: '+key+b'\r\n\r\n'
                 else:
                     resp = UnknownErr
@@ -698,23 +744,52 @@ def message_handle(client):
             else:
                 resp = getFile(head['path'], rang=head.get('Range'), pETag=head.get('If-None-Match'), token=head.get('token'))
         elif head['Method'].upper() == "POST":
-            if data[:15]!=b'{"oprt":"token"' and head['path'][:SL]!=Share and  not checkPWD(head['token']):
+            pt = head['path']
+            if pt==':host':
+                d = loads(data.decode())
+                if not Hosts.get(d.get('ip')):
+                    Hosts[d.get('ip')] = d.get('host')
+                    print(d)
+                resp = "1"
+            elif data[:15]!=b'{"oprt":"token"' and pt[:SL]!=Share and  not checkPWD(head['token']):
                 resp = pwdErr
-            elif head['path'] and head.get('Content-Type') == 'application/octet-stream':
-                log("Post   File %-16s %s" %
-                    (head['Content-Length'], head['path']))
-                try:
-                    f = open(head['path'], 'wb')
+            elif head.get('Content-Type') == 'plain/text':
+                with open(pt,'wb') as f:
                     f.write(data)
-                    f.close()
+                resp = successResp
+            elif pt and head.get('Content-Type') == 'application/octet-stream':
+                # 加上Range: start-end,total
+                log("Post   File %-16s %s" %
+                    (head['Content-Length'], pt))
+                start = int(head.get('Start',0))
+                f = None
+                try:
+                    if pt in Files:
+                        f = Files[pt]['file']
+                        Files[pt]['last'] = time()
+                    else:
+                        f = open(pt, 'wb')
+                        Files[head['path']] = {'last':time(),'file':f}
+                        # 写入相应大小的空文件  全部被填充为\0 Nul  可以保留一个日志，记录已经上传的字节范围
+                        f.seek(int(head.get('Size',1))-1)
+                        f.write(b'\0')
+                    if start==-1:
+                        sleep(2)
+                        Files.pop(pt)
+                        f.close()
+                    else:
+                        f.seek(start)
+                        f.write(data)
                     resp = successResp
                 except Exception as e:
                     msg = str(e)
+                    trc = fexc()
             elif head.get('Content-Type') == "application/json" and len(data) > 0:
                 try:
                     data = loads(data.decode())
                 except:
                     msg = 'Invalid Data'
+                    trc = fexc()
                     break
                 oprt = data.get('oprt')
                 if oprt == 'cmd':
@@ -749,6 +824,7 @@ def message_handle(client):
                                 break
                             except Exception as e:
                                 msg = str(e)
+                                trc = fexc()
                         else:
                             log('\033[35mcmd\033[0m    no return             '+cmds)
                             try:
@@ -764,8 +840,10 @@ def message_handle(client):
                                 resp = pack(res='HTTP/1.1 200 OK', header={"Content-Type": "text/plain; charset=utf-8"}, data=dat)
                             except Exception as e:
                                 msg = str(e)
+                                trc = fexc()
                     else:
                         msg = "Parameter Error (expect key of 'cmd')"
+                        trc = fexc()
                 elif oprt == 'token':
                     ip = ip_pool[client.host]
                     ip.lastqpwd = time()
@@ -799,6 +877,7 @@ def message_handle(client):
                         resp = successResp
                     except Exception as e:
                         msg = str(e)
+                        trc = fexc()
                 elif oprt == 'new':
                     if data.get('type') == 'folder':
                         makedirs(data.get('path'))
@@ -819,12 +898,14 @@ def message_handle(client):
                                 resp = pack(res='HTTP/1.1 200 OK', header=CTjson, data=dumps(res))
                             except Exception as e:
                                 msg = str(e)
+                                trc = fexc()
                     elif data.get('url'):
                         try:
                             l = getLrc(data['url'])
                             resp = pack(res='HTTP/1.1 200 OK', header={"Content-Type": "text/plain; charset=utf-8"}, data=l)
                         except Exception as e:
                             msg = str(e)
+                            trc = fexc()
                     else:
                         msg = "Parameter Error (expect key of 'path')"
                 else:
@@ -853,7 +934,7 @@ def message_handle(client):
             if resp:
                 client.socket.send(resp)
             else:
-                resp = pack(res="HTTP/1.1 400 Bad Request", header=CTjson, data=dumps({"code": 400, "message": msg}))
+                resp = pack(res="HTTP/1.1 400 Bad Request", header=CTjson, data=dumps({"code": 400, "message": msg, "trace":trc}))
                 client.socket.send(resp)
         except:
             pass
@@ -861,8 +942,16 @@ def message_handle(client):
     del client
 
 
-def maintain():
+def maintain()->None:
+    global Sub
     while True:
+        if not Sub:
+            host = gethostname()
+            ip = gethostbyname(host)
+            try:
+                if post('http://172.23.133.78/:host',data=dumps({"host":host,"ip":ip}),timeout=5).text=='1':
+                    Sub = 1
+            except:pass
         sleep(120)
         now = time()
         w = []
@@ -886,7 +975,9 @@ def maintain():
             ip_pool.pop(i)
         w = []
         for i in Tokens:
-            if now-Tokens[i]>43200:w.append(i)
+            if now-Tokens[i]>43200:
+                print(now, Tokens[i])
+                w.append(i)
         for i in w:
             Tokens.pop(i)
 def Manage(cmd):
@@ -940,7 +1031,7 @@ def Manage(cmd):
                 pass
         return s
     elif cmd == '':
-        if input("\033[1A\033[1;31m    One more time to confirm exit\033[0m ") == '':
+        if input("\033[1A\033[1;31mSure to exit? yes or no\033[0m ") == 'yes':
             return False
     elif cmd == '-p':
         l = len(Pipes)
@@ -962,6 +1053,8 @@ def Manage(cmd):
                 p.append(Pipes[i])
         Pipes = p
         return f'Pipes {l}, closed {n}, remaining {l-n}'
+    elif cmd=='-sub':
+        print(Hosts)
     elif len(cmd)>2 and (cmd[0]=="/" or cmd[1]==":"):
         global SL,Share
         if Win :cmd = cmd.replace('/','\\')
@@ -1008,7 +1101,7 @@ def Manage(cmd):
                 windll.kernel32.SetThreadExecutionState(0x80000001)
                 return 'Wake locked, computer will not sleep.'
         else:
-            return 'This is not a windows system, sleep has no supported yet.'
+            return 'This is not a windows system, sleep has not supported yet.'
     elif f == 'show':
         s = f'Pipes[{p+1}]\n'
         out = Pipes[p].stdout.read(Pipes[p].stdout.seek(0, 2))
@@ -1020,10 +1113,13 @@ def Manage(cmd):
     elif f == 'kill':
         Pipes[p].kill()
         return f'Killed Pipes[{p+1}]'
-def close():
+def close()->None:
     socket_server.close()
     log(f'Server {ADDRESS} closed.')
     if Win: windll.kernel32.SetThreadExecutionState(0x80000000)
+    if Sub:
+        # post('http://')
+        pass
     for i in Files:
         Files[i]['file'].close()
     if AutoCloseSub and len(Pipes):
@@ -1059,9 +1155,21 @@ def init():
         socket_server = socket(AF_INET, SOCK_STREAM)  # 创建 socket 对象
         socket_server.bind(ADDRESS)
         socket_server.listen(16)  # 等待未处理请求数（有很多人理解为最大连接数，其实是错误的）
-    except Exception as e:
-        log(__err+str(e))
-        return
+    except Exception as e1:
+        log(__err + str(e1))
+        try:
+            socket_server = socket(AF_INET, SOCK_STREAM)  # 创建 socket 对象
+            p = input('Try another port number: ')
+            if p.isdigit():
+                ADDRESS = (ADDRESS[0], int(p))
+                socket_server.bind(ADDRESS)
+                socket_server.listen(16)
+            else: raise ValueError('Port is not an invalid number([0-65535])!')
+        except Exception as e:
+            log(__err+str(e))
+            return
+    if Win:
+        ShowWindow(TM,0)
     ADDRESS = f'{ADDRESS[0]}:{ADDRESS[1]}'
     hostname = gethostname()
     ip_address = gethostbyname(hostname)
@@ -1076,10 +1184,11 @@ def init():
     # 线程2：维护回收
     thread2 = Thread(target=maintain, daemon=True)
     thread2.start()
-    thread3 = Thread(target=thquit,daemon=True)
-    thread3.start()
-    thread4 = Thread(target=thshow,daemon=True)
-    thread4.start()
+    if Win:
+        thread3 = Thread(target=thquit,daemon=True)
+        thread3.start()
+        thread4 = Thread(target=thshow,daemon=True)
+        thread4.start()
     # 线程3：终端输入
     try:
         while True:
