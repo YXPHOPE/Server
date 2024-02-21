@@ -1,0 +1,7 @@
+chardet
+requests
+pillow
+pynput
+pywin32
+pvrecorder
+pyaudio

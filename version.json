@@ -1,0 +1,16 @@
+{
+  "version": 10101,
+  "ver": "1.1.1",
+  "files": {
+    "./": ["LICENSE", "Readme.md", "Server.py", "index.html", "requirements.txt"],
+    "css/": {
+      "./": ["index.css", "xspreadsheet.css"]
+    },
+    "img/": {
+      "./": ["delete.svg", "download.svg", "rename.svg", "xlsxicon.svg"]
+    },
+    "lib/": {
+      "./": ["docx-preview.min.js", "index.js", "jszip.min.js", "xlsx.core.min.js", "xspreadsheet.js"]
+    }
+  }
+}
