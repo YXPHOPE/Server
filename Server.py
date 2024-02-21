@@ -136,8 +136,7 @@ class Cfg:
                         for i in range(li):
                             j = struct.unpack('<h', bs[l:l+2])[0]
                             l += 2+j
-                            self.tokens[bs[l-j:l].decode('utf-8')
-                                        ] = struct.unpack('<f', bs[l:l+4])[0]
+                            self.tokens[bs[l-j:l].decode('utf-8')] = struct.unpack('<f', bs[l:l+4])[0]
                             l += 4
         except Exception as e:
             print(ERR, str(e))
@@ -150,13 +149,11 @@ class Cfg:
         try:
             f = open('config', 'wb')
             bs = bytearray(struct.pack('6sx???h', b'config', self.nopwd, self.log, self.auto_sleep, self.port))
-            bstr = self.pack(self.ip)+n + self.pack(self.pwd) + \
-                n + self.pack(self.share)+n
+            bstr = self.pack(self.ip)+n + self.pack(self.pwd) + n + self.pack(self.share)+n
             bs += struct.pack('i', len(bstr))
             bs += bstr+struct.pack('i', len(self.tokens))
             for i in self.tokens:
-                bs += struct.pack('h', len(i))+i.encode('utf-8') + \
-                    struct.pack('f', self.tokens[i])
+                bs += struct.pack('h', len(i))+i.encode('utf-8') + struct.pack('f', self.tokens[i])
             bs += b'end'
             for i in range(len(bs)):
                 bs[i] = bs[i] ^ 0x66
@@ -166,8 +163,7 @@ class Cfg:
             print(ERR, str(e))
 
     def p(self) -> None:
-        self.PWD = ''.join([chr(i ^ 0x66)
-                           for i in bytearray(self.pwd.encode('utf-8'))])
+        self.PWD = ''.join([chr(i ^ 0x66) for i in bytearray(self.pwd.encode('utf-8'))])
 
     def pack(self, s='') -> bytes:
         return struct.pack(str(len(s))+'s', s.encode('utf-8'))
@@ -283,8 +279,7 @@ class IP:
 
 
 def getLrcList(q, singer='') -> list:
-    r = get('http://opqnext.com/search.html?q=' +
-            q+' '+singer, headers=Head).text
+    r = get('http://opqnext.com/search.html?q=' + q + ' '+singer, headers=Head).text
     s = r.find('<div class="media position-relative">')
     e = r.rfind('"content_right"')-74
     r = r[s:e].split('<hr>')
@@ -555,8 +550,7 @@ def getLen(m=b'') -> tuple:
         msglen = m[3]+m[2]*B[1]
         offset = 4
     elif msglen == 127:
-        msglen = m[9]+m[8]*B[1]+m[7]*B[2]+m[6]*B[3] + \
-            m[5]*B[4]+m[4]*B[5]+m[3]*B[6]+m[2]*B[7]
+        msglen = m[9]+m[8]*B[1]+m[7]*B[2]+m[6]*B[3] + m[5]*B[4]+m[4]*B[5]+m[3]*B[6]+m[2]*B[7]
         offset = 10
     return (msglen, offset)
 
@@ -948,8 +942,7 @@ def message_handle(client:'Client') -> None:
                                 # 去除退格\x08和ESC控制符
                                 output = sub(r'\x08|(\x1B\[\??\d*(;\d+)*[mA-Ksulh])', '', process.stdout.readline()).encode()
                                 # 要用16进制表示每个节的大小
-                                resp = b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n' + \
-                                    ('%x\r\n' % (len(output))
+                                resp = b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n' + ('%x\r\n' % (len(output))
                                      ).encode()+output+b'\r\n'
                                 client.socket.send(resp)
                                 while output or process.poll() == None:
