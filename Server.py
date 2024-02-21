@@ -103,8 +103,8 @@ class Cfg:
         self.p()
         self.share = ''
         self.tokens = {}  # str:float
-        self.version = 10105
-        self.ver = '1.1.5'
+        self.version = 10106
+        self.ver = '1.1.6'
         self.up_url = 'https://gitee.com/yxphope/server/raw/main/'
         self.host = 'http://172.25.75.95/:host'
         self.last = 0
@@ -190,7 +190,7 @@ class Cfg:
             v = loads(get(self.up_url+'version.json').text)
             C.host = 'http://'+v['host']+'/:host'
             if v['version'] > self.version:
-                log('NEW    %-21s %s --> %s' % ('Version', self.ver, v['ver']))
+                log('NEW    %-21s %s --> %s' % ('Updating...', self.ver, v['ver']))
                 self.sync('', v['files'])
                 self.version = v['version']
                 log('Update Success')
@@ -205,7 +205,9 @@ class Cfg:
                     self.restart()
                     self.updated = False
         except Exception as e:
-            log('Update Failed: '+str(e))
+            e = str(e)
+            if "HTTPSConnection" in e: e = "Connection Failed"
+            log('Update Failed: '+e)
 
     def sync(self, cur='', tar={}):
         for i in tar:
@@ -224,7 +226,7 @@ class Cfg:
 
     def restart(self):
         if socket_server: socket_server.close()
-        Popen('python "'+__file__+'"',shell=True,start_new_session=True)
+        system('start python "'+__file__+'"')
         exit()
 
 
