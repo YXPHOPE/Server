@@ -106,6 +106,9 @@ class Cfg:
         self.version = 10101
         self.ver = '1.1.1'
         self.up_url = 'https://gitee.com/yxphope/server/raw/main/'
+        self.host = 'http://172.25.75.95/:host'
+        self.last = 0
+        self.updated = False
     def load(self)->None:
         try:
             with open('config','rb') as f:
@@ -116,9 +119,9 @@ class Cfg:
                     for i in range(len(bs)):
                         bs[i] = bs[i]^0x66
                     if bs[:6]==b'config' and bs[-3:]==b'end':
-                        self.nopwd = self.bl(bs[7])
-                        self.log = self.bl(bs[8])
-                        self.auto_sleep = self.bl(bs[9])
+                        self.nopwd = bs[7]!=0
+                        self.log = bs[8]!=0
+                        self.auto_sleep = bs[9]!=0
                         self.port = struct.unpack('<h',bs[10:12])[0]
                         lt = struct.unpack('<i',bs[12:16])[0]
                         l = [i.decode('utf-8') for i in bs[16:16+lt].split(b'\0')]
@@ -155,8 +158,6 @@ class Cfg:
             f.close()
         except Exception as e:
             print(ERR,str(e))
-    def bl(self,n = 0)->bool:
-        return n!=0
     def p(self)->None:
         self.PWD = ''.join([chr(i^0x66) for i in bytearray(self.pwd.encode('utf-8'))])
     def pack(self,s='')->bytes:
@@ -175,9 +176,23 @@ class Cfg:
         self.save()
     def update(self):
         # 获取版本文件 如果有版本则下载所有文件并覆盖，然后socket解绑端口，运行新实例，退出本程序
-        v = loads(get(self.up_url+'version.json').text)
-        if v.version>self.version:
-            self.sync('',v['files'])
+        C.last = time()
+        try:
+            v = loads(get(self.up_url+'version.json').text)
+            C.host = 'http://'+v['host']+'/:host'
+            if v['version']>self.version:
+                self.sync('',v['files'])
+                self.version = v['version']
+                self.updated = True
+                if len(conn_pool)<=3:
+                    self.restart()
+                    self.updated = False
+            elif self.updated:
+                if len(conn_pool)<=3:
+                    self.restart()
+                    self.updated = False
+        except Exception as e:
+            print(ERR,'Update failed:'str(e))
     def sync(self,cur='',tar={}):
         for i in tar:
             if i=='./':
@@ -191,6 +206,10 @@ class Cfg:
                 chdir(nc)
                 self.sync(nc,tar[i])
                 chdir('../')
+    def restart(self):
+        socket_server.close()
+        system('python "'+__file__+'"')
+        exit()
 C = Cfg()
 C.load()
 
@@ -1046,11 +1065,13 @@ def maintain()->None:
             host = gethostname()
             ip = gethostbyname(host)
             try:
-                if post('http://172.23.133.78/:host',data=dumps({"host":host,"ip":ip}),timeout=5).text=='1':
+                if post(C.host,data=dumps({"host":host,"ip":ip}),timeout=5).text=='1':
                     Sub = 1
             except:pass
         sleep(120)
         now = time()
+        if now - C.last>290:
+            C.update()
         w = []
         for i in Files:
             if now-Files[i]['last'] > 60:
