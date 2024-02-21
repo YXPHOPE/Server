@@ -103,8 +103,8 @@ class Cfg:
         self.p()
         self.share = ''
         self.tokens = {}  # str:float
-        self.version = 10103
-        self.ver = '1.1.3'
+        self.version = 10104
+        self.ver = '1.1.4'
         self.up_url = 'https://gitee.com/yxphope/server/raw/main/'
         self.host = 'http://172.25.75.95/:host'
         self.last = 0
