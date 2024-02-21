@@ -3,7 +3,7 @@
   "ver": "1.1.6",
   "host":"172.25.75.95",
   "files": {
-    "./": ["LICENSE", "Readme.md", "Server.py", "index.html", "requirements.txt", "version.json"],
+    "./": ["version.json", "LICENSE", "Readme.md", "Server.py", "index.html", "requirements.txt"],
     "css/": {
       "./": ["index.css", "xspreadsheet.css"]
     },
