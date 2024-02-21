@@ -1,9 +1,9 @@
 {
-  "version": 10104,
-  "ver": "1.1.4",
+  "version": 10105,
+  "ver": "1.1.5",
   "host":"172.25.75.95",
   "files": {
-    "./": ["LICENSE", "Readme.md", "Server.py", "index.html", "requirements.txt"],
+    "./": ["LICENSE", "Readme.md", "Server.py", "index.html", "requirements.txt", "version.json"],
     "css/": {
       "./": ["index.css", "xspreadsheet.css"]
     },

@@ -103,8 +103,8 @@ class Cfg:
         self.p()
         self.share = ''
         self.tokens = {}  # str:float
-        self.version = 10104
-        self.ver = '1.1.4'
+        self.version = 10105
+        self.ver = '1.1.5'
         self.up_url = 'https://gitee.com/yxphope/server/raw/main/'
         self.host = 'http://172.25.75.95/:host'
         self.last = 0
@@ -197,12 +197,15 @@ class Cfg:
                 log('NEW    %-21s %s --> %s' % ('Version', self.ver, v['ver']))
                 self.sync('', v['files'])
                 self.version = v['version']
+                log('Update Success')
                 self.updated = True
                 if len(conn_pool) <= 3:
+                    log('Restarting...')
                     self.restart()
                     self.updated = False
             elif self.updated:
                 if len(conn_pool) <= 3:
+                    log('Restarting...')
                     self.restart()
                     self.updated = False
         except Exception as e:
@@ -214,6 +217,7 @@ class Cfg:
                 for j in tar[i]:
                     with open(j, 'wb') as f:
                         f.write(get(self.up_url+cur+j).content)
+                        print(cur+j)
             else:
                 nc = cur+i
                 if not path.isdir(nc):
