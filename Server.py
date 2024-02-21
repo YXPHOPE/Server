@@ -38,7 +38,6 @@ if Win:
 # 任务：历史记录（js）
 # 播放器播放列表，连续播放（js）
 # 上传 保存 断点续传 多线程传输（服务端）
-port = 80
 ST = 0
 Lim = 300*1024*1024
 def showTM()-> None:
@@ -103,8 +102,8 @@ class Cfg:
         self.p()
         self.share = ''
         self.tokens = {} # str:float
-        self.version = 10101
-        self.ver = '1.1.1'
+        self.version = 10103
+        self.ver = '1.1.3'
         self.up_url = 'https://gitee.com/yxphope/server/raw/main/'
         self.host = 'http://172.25.75.95/:host'
         self.last = 0
@@ -181,6 +180,7 @@ class Cfg:
             v = loads(get(self.up_url+'version.json').text)
             C.host = 'http://'+v['host']+'/:host'
             if v['version']>self.version:
+                log('NEW    %-21s %s --> %s'%('Version',self.ver,v['ver']))
                 self.sync('',v['files'])
                 self.version = v['version']
                 self.updated = True
@@ -192,7 +192,7 @@ class Cfg:
                     self.restart()
                     self.updated = False
         except Exception as e:
-            print(ERR,'Update failed:'str(e))
+            print(ERR,'Update failed:', str(e))
     def sync(self,cur='',tar={}):
         for i in tar:
             if i=='./':
