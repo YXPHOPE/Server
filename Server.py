@@ -224,7 +224,7 @@ class Cfg:
 
     def restart(self):
         if socket_server: socket_server.close()
-        system('python "'+__file__+'"')
+        Popen('python "'+__file__+'"',shell=True,start_new_session=True)
         exit()
 
 
