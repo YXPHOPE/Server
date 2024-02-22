@@ -1,5 +1,7 @@
+VER = '1.1.7' # 必须是3个整数由2个点隔开
+PWD = '123456'
 from requests import get, post  # 其实可以用socket，但我不想弄SSL
-from os import getcwd, system, rename, remove, path, chdir, makedirs, scandir, _exit
+from os import getcwd, system, rename, remove, path, chdir, makedirs, scandir, _exit, execlp
 import wave
 from traceback import format_exc as fexc
 import struct
@@ -40,7 +42,6 @@ if Win:
 ST = 0
 Lim = 300*1024*1024
 
-
 def showTM() -> None:
     if Win:
         global ST
@@ -54,6 +55,7 @@ Diskdir = {'folder': [], 'file': [], 'dir': ''}
 Buffer = 1024
 Sub = 0
 Local = getcwd()  # 相对路径地址
+if Win:Local = Local.lower()
 Share = None  # 共享地址(不用密码)
 rmtIMG = BytesIO()
 SL = 0
@@ -88,9 +90,10 @@ CTjson = {"Content-Type": "application/json; charset=utf-8"}
 
 class Cfg:
     def __init__(self) -> None:
-        self.nopwd = True
+        self.nopwd = False
         self.log = True
         self.auto_sleep = False
+        self.auto_update = True
         self.port = int(80)
         self.ip = '0.0.0.0'
         self.address = (self.ip, self.port)
@@ -98,13 +101,13 @@ class Cfg:
         # :: 只有在socket(AF_INET6, SOCK_STREAM)绑定IPv6地址时有效，表示IPv6回环地址，且支持IPv4访问
         # 127.0.0.1 环回地址，域名localhost默认指向它，只能在本机访问
         # 0.0.0.0   监听所有本地IP地址的该端口，访问本机IP即可访问
-        self.pwd = '123456'
+        self.pwd = PWD
         self.PWD = ''
-        self.p()
         self.share = ''
         self.tokens = {}  # str:float
-        self.version = 10106
-        self.ver = '1.1.6'
+        self.ver = VER
+        self.version = 0
+        self.p()
         self.up_url = 'https://gitee.com/yxphope/server/raw/main/'
         self.host = 'http://172.25.75.95/:host'
         self.last = 0
@@ -120,9 +123,10 @@ class Cfg:
                     for i in range(len(bs)):
                         bs[i] = bs[i] ^ 0x66
                     if bs[:6] == b'config' and bs[-3:] == b'end':
-                        self.nopwd = bs[7] != 0
-                        self.log = bs[8] != 0
-                        self.auto_sleep = bs[9] != 0
+                        self.nopwd = bs[6] != 0
+                        self.log = bs[7] != 0
+                        self.auto_sleep = bs[8] != 0
+                        self.auto_update = bs[9] != 0
                         self.port = struct.unpack('<h', bs[10:12])[0]
                         lt = struct.unpack('<i', bs[12:16])[0]
                         l = [i.decode('utf-8')
@@ -140,7 +144,10 @@ class Cfg:
                             l += 4
         except Exception as e:
             print(ERR, str(e))
-            if input('config file not exists, or is not consistent with the expected format, rewrite it?(y) ') == 'y':
+            if path.isfile('config'):
+                if input('config file not exists, or is not consistent with the expected format, rewrite it?(y) ') == 'y':
+                    self.save()
+            else:
                 self.save()
 
     def save(self) -> None:
@@ -148,7 +155,7 @@ class Cfg:
         y = b'\1'
         try:
             f = open('config', 'wb')
-            bs = bytearray(struct.pack('6sx???h', b'config', self.nopwd, self.log, self.auto_sleep, self.port))
+            bs = bytearray(struct.pack('6s????h', b'config', self.nopwd, self.log, self.auto_sleep, self.auto_update,self.port))
             bstr = self.pack(self.ip)+n + self.pack(self.pwd) + n + self.pack(self.share)+n
             bs += struct.pack('i', len(bstr))
             bs += bstr+struct.pack('i', len(self.tokens))
@@ -164,6 +171,9 @@ class Cfg:
 
     def p(self) -> None:
         self.PWD = ''.join([chr(i ^ 0x66) for i in bytearray(self.pwd.encode('utf-8'))])
+        l = [int(i) for i in VER.split('.')]
+        self.version = l[0]*10000+l[1]*100+l[2]
+
 
     def pack(self, s='') -> bytes:
         return struct.pack(str(len(s))+'s', s.encode('utf-8'))
@@ -190,15 +200,19 @@ class Cfg:
             v = loads(get(self.up_url+'version.json').text)
             C.host = 'http://'+v['host']+'/:host'
             if v['version'] > self.version:
-                log('NEW    %-21s %s --> %s' % ('Updating...', self.ver, v['ver']))
-                self.sync('', v['files'])
-                self.version = v['version']
-                log('Update Success')
-                self.updated = True
-                if len(conn_pool) <= 3:
-                    log('Restarting...')
-                    self.restart()
-                    self.updated = False
+                i = self.auto_update
+                if not i:
+                    i = input('New version '+v['ver']+', Update?(y)').lower()=='y'
+                if i:
+                    log('NEW    %-21s %s --> %s' % ('Updating...', self.ver, v['ver']))
+                    self.sync('', v['files'])
+                    self.version = v['version']
+                    log('Update Success')
+                    self.updated = True
+                    if len(conn_pool) <= 3:
+                        log('Restarting...')
+                        self.restart()
+                        self.updated = False
             elif self.updated:
                 if len(conn_pool) <= 3:
                     log('Restarting...')
@@ -226,8 +240,9 @@ class Cfg:
 
     def restart(self):
         if socket_server: socket_server.close()
-        system('start python "'+__file__+'"')
-        exit()
+        self.save()
+        execlp('python','-u','"'+__file__+'"')
+        _exit(0)
 
 
 def Help() -> str:
@@ -596,6 +611,8 @@ def getFile(loc, head=False, rang='', pETag='', token='') -> bytes:
         return resp
     elif loc != 'favicon.ico' or path.isfile(path.abspath(loc)):
         loc = path.abspath(loc).replace('\\', '/')
+        # 烦死了 获取到的abspath大小写变来变去，在调试模式和正常运行模式下不一样
+        if Win: loc = loc.lower()
     else:
         if pETag == etgFavi:
             return faviSame
@@ -608,14 +625,6 @@ def getFile(loc, head=False, rang='', pETag='', token='') -> bytes:
                 pass
             else:
                 return pwdErr
-        # html = loc
-        # if html[-1] != '/':
-        #     html += '/'
-        # html += 'index.html'
-        # if path.isfile(html):
-        #     loc = html
-        #     resp = pack(res='HTTP/1.1 200 OK', header={'Content-Type': 'text/html'}, data='<!doctype html><html><head><meta http-equiv="refresh" content="0; url=/'+loc+'"><title>Redirect...</title></head></html>')
-        # else:
         log('%-7s%-21s %s' % ('GET', 'listDir', loc))
         # 返回目录信息
         try:
@@ -981,15 +990,20 @@ def message_handle(client:'Client') -> None:
                     ip = ip_pool[client.host]
                     ip.lastqpwd = time()
                     ip.qpwd += 1
-                    if ip.qpwd > 3:
+                    if ip.qpwd > 5:
                         msg = "Please wait for a moment and try again later."
                     elif data.get('pwd') and str(data['pwd']) == C.PWD:
-                        tok = str(int(ip.lastqpwd * time()
-                                  * (ip.lastqpwd % 9)/9))
+                        tok = str(int(ip.lastqpwd * time() * (ip.lastqpwd % 9)/9))
                         C.tokens[tok] = ip.lastqpwd
                         resp = pack(res='HTTP/1.1 200 OK', header=CTjson, data=dumps({'code': 200, 'token': tok}))
                     else:
                         msg = "No pwd or the password is incorrect!"
+                elif oprt == 'setpwd':
+                    pass
+                elif oprt == 'update':
+                    pass
+                elif oprt == 'restart':
+                    pass
                 elif oprt == 'get':
                     if data.get('file'):
                         resp = getFile(data['file'])
@@ -1253,6 +1267,7 @@ def Manage(cmd):
 
 def close() -> None:
     socket_server.close()
+    C.save()
     log(f'Server {C.addr} closed.')
     if Win:
         windll.kernel32.SetThreadExecutionState(0x80000000)
@@ -1319,7 +1334,7 @@ def init():
     C.addr = f'{C.address[0]}:{C.address[1]}'
     hostname = gethostname()
     ip_address = gethostbyname(hostname)
-    print(strftime('Date: %Y/%m/%d %a'), '   IP:', ip_address)
+    print(strftime('Date: %Y/%m/%d %a'), ' IP:', ip_address)
     Local = Local.replace('\\', '/')
     log('\033[33mServer \033[1;33m%-21s \033[0mstarted at \033[33m%s\033[0m' %
         (C.addr, Local))
@@ -1331,6 +1346,7 @@ def init():
     # 线程2：维护回收
     thread2 = Thread(target=maintain, daemon=True)
     thread2.start()
+    sleep(2)
     if Win:
         thread3 = Thread(target=thquit, daemon=True)
         thread3.start()
@@ -1363,6 +1379,7 @@ for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
 C = Cfg()
 C.load()
 C.update()
+if len(argv)>1 and argv[1]=='-r':C.restart()
 CHAT = Chat()
 
 if __name__ == '__main__':

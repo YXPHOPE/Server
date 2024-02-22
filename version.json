@@ -1,6 +1,6 @@
 {
-  "version": 10106,
-  "ver": "1.1.6",
+  "version": 10107,
+  "ver": "1.1.7",
   "host":"172.25.75.95",
   "files": {
     "./": ["version.json", "LICENSE", "Readme.md", "Server.py", "index.html", "requirements.txt"],
