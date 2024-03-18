@@ -9,7 +9,6 @@ from io import BytesIO
 from PIL import ImageGrab
 from base64 import b64encode
 from hashlib import sha1  # 建立websocket时握手需要
-from chardet import detect
 from re import sub
 from subprocess import Popen, PIPE, DEVNULL
 from urllib.parse import unquote
@@ -28,7 +27,8 @@ Win = getOS() == 'Windows'
 if Win:
     system("color")  # Windows CMD 颜色刷新
     from win32api import GetConsoleTitle
-    from win32gui import FindWindow, ShowWindow
+    from win32gui import FindWindow, ShowWindow, GetCursorInfo
+    from win32com.client import Dispatch # windows组件
     TM = FindWindow(0, GetConsoleTitle())
     from ctypes import windll
     windll.shcore.SetProcessDpiAwareness(2)
@@ -50,11 +50,14 @@ def showTM() -> None:
 
 
 Hosts = {}
-Magic = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+Magic = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11" # for socket
+# GetCursorInfo()[1]: CSS.cursor
+CS = {65539:'default', 0:'none', 65563:'help', 65567:'pointer', 65561:'progress', 65543:'wait', 49743883:'cell', 65545:'crosshair', 65541:'text', 303762077:'vertical-text', 29429383:'alias', 31919477:'copy', 65557:'move', 65559:'no-drop', 14093987:'grab', 41092819:'grabbing', 65553:'e-resize', 65555:'n-resize', 65551:'ne-resize', 65549:'nw-resize', 9241657:'col-resize', 41684679:'row-resize', 52956727:'zoom-in', 90771627:'zoom-out'}
 Diskdir = {'folder': [], 'file': [], 'dir': ''}
 Buffer = 1024
 Sub = 0
-Local = getcwd()  # 相对路径地址
+Local = __file__.replace('\\','/')  # 相对路径地址
+Local = Local[:Local.rfind('/')]
 if Win:Local = Local.lower()
 Share = None  # 共享地址(不用密码)
 rmtIMG = BytesIO()
@@ -193,13 +196,13 @@ class Cfg:
         self.share = s
         self.save()
 
-    def update(self):
+    def update(self, force=False):
         # 获取版本文件 如果有版本则下载所有文件并覆盖，然后socket解绑端口，运行新实例，退出本程序
         C.last = time()
         try:
             v = loads(get(self.up_url+'version.json').text)
             C.host = 'http://'+v['host']+'/:host'
-            if v['version'] > self.version:
+            if force or v['version'] > self.version:
                 i = self.auto_update
                 if not i:
                     i = input('New version '+v['ver']+', Update?(y)').lower()=='y'
@@ -241,9 +244,65 @@ class Cfg:
     def restart(self):
         if socket_server: socket_server.close()
         self.save()
+        # execlp 使用当前path环境变量，将当前进程替换为另一个进程，pid不变
+        # execlp 可行，system 不行，加start也不行，Popen也不行
         execlp('python','-u','"'+__file__+'"')
         _exit(0)
 
+    def Task(self):
+        if not Win: return
+        # 连接计划任务服务
+        try:
+            scheduler = Dispatch('Schedule.Service')
+            scheduler.Connect()
+            Root = scheduler.GetFolder('\\')
+            Task = scheduler.NewTask(0)
+            # tk = Root.GetTask('Server') # 找不到会直接报错
+            # tg = tk.Definition.Triggers[0]
+            # general 信息
+            Info = Task.RegistrationInfo
+            Info.Description = 'Auto start python server at startup.'
+            Info.Author = "python"
+            Info.Date = '2021-10-31T10:00:00'
+            Info.Version = VER
+            Prcp = Task.Principal
+            Prcp.GroupId = 'Administrators'
+            Prcp.LogonType = 4 # 需要管理员权限
+            Prcp.RunLevel = 1
+            Prcp.Id = scheduler.ConnectedUser
+            # Triggers 触发器 1:Once 2:Daily 6:on idle 8:at startup 9:At log on(8、9需要管理员权限) 更多可先在任务设置好，这里获取scheduler.GetFolder('\\').GetTask('Server').Definition.Triggers[0]
+            Trigger = Task.Triggers.Create(9)
+            Trigger.Delay = 'PT30S'
+            Trigger.Enabled = True
+            # Trigger.StartBoundary = '2024-02-23T20:37:00'
+            # Trigger.Id = "DailyTriggerId"
+            # Acition 执行的动作
+            Action = Task.Actions.Create(0)
+            Action.ID = 'TEST'
+            Action.Path = 'python'
+            # Action.Path = "netstat"
+            Action.Arguments = '"'+__file__+'"'
+            # Settings 设置
+            Set = Task.Settings
+            Set.Enabled = True
+            Set.Hidden = True
+            Set.RunOnlyIfIdle = False
+            Set.DisallowStartIfOnBatteries = False
+            Set.StopIfGoingOnBatteries = False
+            Set.StartWhenAvailable = True
+            Set.RestartCount = 3
+            Set.RestartInterval = "PT5M"
+            # 注册任务
+            Root.RegisterTaskDefinition(
+                "Server",
+                Task, 
+                6,   # update
+                '',  # 用于注册任务的用户凭据
+                '',  # 用于注册任务的userId的密码
+                0  # 未指定登录方法。
+            )
+        except:
+            log('Task   Failed to create or update, check administrator privilege')
 
 def Help() -> str:
     s = ''
@@ -327,7 +386,7 @@ def getLrcList(q, singer='') -> list:
             if not bol and o['name'] == q and o['artist'] == singer:
                 o['lrc'] = getLrc(o['url'])
                 bol = 1
-            res.append(o)
+            res.append(o)   
     except Exception as e:
         print('getLrcList Error:', str(e))
     if not bol:
@@ -648,6 +707,7 @@ def getFile(loc, head=False, rang='', pETag='', token='') -> bytes:
         except Exception as e:
             resp = pack(res="HTTP/1.1 400 Bad Request", header=CTjson, data=dumps({"code": 400, "message": str(e), "trace": fexc()}))
     elif path.isfile(loc):
+        # print(Local,loc,token)
         if loc.find(Local) != 0 and not checkPWD(token) and loc[:SL] != Share:
             return pwdErr
         size = path.getsize(loc)
@@ -796,12 +856,14 @@ def message_handle(client:'Client') -> None:
                         # 收发数据还是以json格式 {name:,chat,time}
                         dat = dat.decode()
                         dat = loads(dat)
+                        snd = 1
                         if dat.get('frame') != None:
                             img = ImageGrab.grab()
                             rmtIMG.seek(0)
                             img.save(rmtIMG, "JPEG")
                             rmtIMG.seek(0)
                             client.socket.send(packMes(rmtIMG.read(), 0))
+                            snd = 0
                         elif dat.get('control'):
                             typ = dat.get('type')
                             xy = dat.get('xy')
@@ -842,6 +904,9 @@ def message_handle(client:'Client') -> None:
                                     Key.tap(keyboard.Key.__getitem__(key))
                                 else:
                                     Key.tap(key)
+                            if snd:
+                                p = GetCursorInfo()[1]
+                                client.socket.send(packMes(str(p)))
                     elif client.ws == ':chat':
                         dat = dat.decode()
                         dat = loads(dat)
@@ -867,7 +932,7 @@ def message_handle(client:'Client') -> None:
         if head['Method'].upper() == "GET":
             if head.get('Upgrade') == 'websocket':
                 tp = head['path']
-                if tp == ':chat' or (tp == ':remote' or tp == ':tlcm' and checkPWD(head['token'])):
+                if tp == ':chat' or ((tp == ':remote' or tp == ':tlcm') and checkPWD(head.get('token'))):
                     client.ws = tp
                     if tp == ':tlcm':
                         print(tp)
@@ -971,6 +1036,7 @@ def message_handle(client:'Client') -> None:
                             log('\033[35mcmd\033[0m    no return             '+cmds)
                             try:
                                 proc = Popen(cmd, shell=True, bufsize=0, stdout=PIPE, stderr=PIPE, encoding='utf-8')
+                                # 
                                 Pipes.append(proc)
                                 # 默认等待2s，如果结束了就返回结果
                                 sleep(2)
@@ -999,11 +1065,22 @@ def message_handle(client:'Client') -> None:
                     else:
                         msg = "No pwd or the password is incorrect!"
                 elif oprt == 'setpwd':
-                    pass
+                    p = data.get('pre','')
+                    n = data.get('ndpwd',False)
+                    pwd = data.get('pwd','')
+                    msg = ''
+                    if len(pwd)<6 :
+                        msg = 'The length of password must longer than 6!'
+                    if p!=C.pwd:
+                        msg = 'Wrong previous password.'
+                    if msg=='':
+                        C.setpwd(n,pwd)
+                        resp = pack(res='HTTP/1.1 200 OK', header=CTjson, data=dumps({'code': 200, 'msg': 'Success'}))
+                    
                 elif oprt == 'update':
                     pass
                 elif oprt == 'restart':
-                    pass
+                    C.restart()
                 elif oprt == 'get':
                     if data.get('file'):
                         resp = getFile(data['file'])
@@ -1063,7 +1140,7 @@ def message_handle(client:'Client') -> None:
         elif head['Method'].upper() == "HEAD":
             resp = getFile(head['path'], head=True)
         elif head['Method'].upper() == 'OPTIONS':
-            # 恶心巴拉的跨域CORS，恶心的预检请求
+            # 恶心巴拉的跨域CORS，恶心的预检请求preflight
             resp = b'HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, GET, HEAD, OPTIONS\r\nAccess-Control-Allow-Headers: *\r\nAccess-Control-Expose-Headers: *\r\nAccess-Control-Max-Age: 31536000\r\nAllow: OPTIONS, GET, HEAD, POST\r\nServer: python\r\n\r\n'
         else:
             msg = 'Unsupport Method'
@@ -1097,8 +1174,9 @@ def maintain() -> None:
             host = gethostname()
             ip = gethostbyname(host)
             try:
-                if post(C.host, data=dumps({"host": host, "ip": ip}), timeout=5).text == '1':
-                    Sub = 1
+                if ip not in C.host:
+                    if post(C.host, data=dumps({"host": host, "ip": ip}), timeout=5).text == '1':
+                        Sub = 1
             except:
                 pass
         sleep(120)
@@ -1297,8 +1375,8 @@ def thquit():
 
 
 def init():
-    global socket_server, Local, AutoCloseSub, Pipes, CHAT, SL
-    print('\033[1;33mPython Server\033[0m')
+    global socket_server, AutoCloseSub, Pipes, CHAT, SL
+    print('\033[1;33mPython Server\033[0m         Version: '+VER)
     for i in range(len(argv)):
         if i == 0:
             continue
@@ -1308,9 +1386,9 @@ def init():
         elif argv[i] == '-h' or argv[i] == '/?':
             print(Help())
             return
-        elif path.isdir(argv[i]):
-            chdir(argv[i])
-            Local = path.abspath(argv[i])
+    C.load()
+    C.update()
+    C.Task()
     try:
         socket_server = socket(AF_INET, SOCK_STREAM)  # 创建 socket 对象
         socket_server.bind(C.address)
@@ -1331,22 +1409,21 @@ def init():
             return
     if Win:
         ShowWindow(TM, 0)
+        system('start http://localhost/')
     C.addr = f'{C.address[0]}:{C.address[1]}'
     hostname = gethostname()
     ip_address = gethostbyname(hostname)
     print(strftime('Date: %Y/%m/%d %a'), ' IP:', ip_address)
-    Local = Local.replace('\\', '/')
     log('\033[33mServer \033[1;33m%-21s \033[0mstarted at \033[33m%s\033[0m' %
         (C.addr, Local))
-    if Win:
-        system('title Server '+C.addr+' '+Local)
+    if Win: system('title Server '+C.addr+' '+Local)
     # 线程1：监听连接
     thread1 = Thread(target=accept_client, daemon=True)
     thread1.start()
     # 线程2：维护回收
     thread2 = Thread(target=maintain, daemon=True)
     thread2.start()
-    sleep(2)
+    sleep(1)
     if Win:
         thread3 = Thread(target=thquit, daemon=True)
         thread3.start()
@@ -1377,8 +1454,6 @@ for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
     if path.isdir(disk):
         Diskdir['folder'].append({"name": disk, "mtime": "", "mts": ""})
 C = Cfg()
-C.load()
-C.update()
 if len(argv)>1 and argv[1]=='-r':C.restart()
 CHAT = Chat()
 

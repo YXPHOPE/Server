@@ -590,7 +590,7 @@ div#resize {
   height: calc(100% - 63px);
   width: 2px;
   background: #3662;
-  z-index: 999999;
+  z-index: 999;
   transition: width 0.1s, left 0.3s;
   transform: translateX(-50%);
   cursor: col-resize;
@@ -1003,7 +1003,7 @@ div#reqpwd {
   left: 50%;
   top: 20px;
   transform: translateX(-50%);
-  z-index: 9999999;
+  z-index: 9998;
   background: #fffc;
   border-radius: 4px;
   box-shadow: 1px 1px 3px 1px #7774;
@@ -1027,4 +1027,49 @@ div#reqpwd * {
   padding: 4px 8px;
   border-radius: 4px;
   cursor: pointer;
+}
+
+div#board {
+  display: none;
+  position: absolute;
+  top: 61px;
+  left: 0;
+  height: calc(100% - 61px);
+  width: 100%;
+  z-index: 999;
+  background: white;
+  padding: 18px;
+  box-sizing: border-box;
+}
+
+span#ver {
+  font: 500 15px/24px Sans-serif;
+  padding-left: 15px;
+}
+span#ver:before{content:"Version"}
+.head-opt>div {
+  border: 1px solid aqua;
+  border-radius: 4px 4px 0 0;
+  display: inline-block;
+  padding: 2px 4px;
+  background: aliceblue;
+  cursor: pointer;
+  border-bottom: none;
+}
+
+input#ndpwd:checked+input {display:block;margin: 6px 0;padding: 2px 4px;}
+
+input#ndpwd+input {
+    display: none;
+}
+#board button {
+  padding: 2px 6px;
+  font-size: 16px;
+  margin: 4px 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#board button:hover {
+  background: aqua;
 }
