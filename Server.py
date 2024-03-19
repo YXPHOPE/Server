@@ -1,11 +1,13 @@
-VER = '1.1.8' # 必须是3个整数由2个点隔开
+VER = '1.1.9' # 必须是3个整数由2个点隔开
 PWD = '123456'
 from requests import get, post  # 其实可以用socket，但我不想弄SSL
 from os import getcwd, system, rename, remove, path, chdir, makedirs, scandir, _exit, execlp
 import wave
 from traceback import format_exc as fexc
+from ssl import wrap_socket
 import struct
 from io import BytesIO
+from signal import signal,SIGTERM,SIGINT
 from PIL import ImageGrab
 from base64 import b64encode
 from hashlib import sha1  # 建立websocket时握手需要
@@ -26,7 +28,7 @@ Win = getOS() == 'Windows'
 # 以下为windows用，linux不行
 if Win:
     system("color")  # Windows CMD 颜色刷新
-    from win32api import GetConsoleTitle
+    from win32api import GetConsoleTitle,SetConsoleCtrlHandler
     from win32gui import FindWindow, ShowWindow, GetCursorInfo
     from win32com.client import Dispatch # windows组件
     TM = FindWindow(0, GetConsoleTitle())
@@ -63,10 +65,12 @@ Share = None  # 共享地址(不用密码)
 rmtIMG = BytesIO()
 SL = 0
 B = [1, 256, 256**2, 256**3, 256**4, 256**5, 256**6, 256**7]
-socket_server = socket(AF_INET, SOCK_STREAM)  # 负责监听的socket
+Server = None
+Servers = None
 conn_pool = []  # 连接池
 ip_pool = {}  # ip 池 限制同一ip连接数不超过16个，以及记录密码错误
 Pipes = []  # 子程序池
+M3U8 = []
 Files = {}  # 文件池 {path:{last,file}}
 AutoCloseSub = True
 HP_ARG = {
@@ -242,7 +246,8 @@ class Cfg:
                 chdir('../')
 
     def restart(self):
-        if socket_server: socket_server.close()
+        if Server: Server.close()
+        if Servers: Servers.close()
         self.save()
         # execlp 使用当前path环境变量，将当前进程替换为另一个进程，pid不变
         # execlp 可行，system 不行，加start也不行，Popen也不行
@@ -306,7 +311,7 @@ class Cfg:
 
 def Help() -> str:
     s = ''
-    if socket_server:
+    if Server:
         hostname = gethostname()
         ip_address = gethostbyname(hostname)
         s += 'Listening ' + C.addr + '    IP: ' + ip_address+'\n'
@@ -474,6 +479,68 @@ class Client:
         else:
             conn_pool.remove(self)
         log('Client %-21s disconnected' % (self.address))
+
+
+def _exc(s,e:Exception):
+    return
+def _handle(client:Client):
+    return
+class MyServer:
+    def __init__(self,ip='0.0.0.0', port=80, exc=_exc,handle=_handle, ssl=False) -> None:
+        self.set(ip,port)
+        self.running = False
+        self.handle = handle
+        self.ssl = ssl
+        self.socket = socket(AF_INET, SOCK_STREAM)
+        try:self.bind()
+        except Exception as e:
+            self.running = False
+            exc(self,e)
+    def bind(self)->None:
+        self.socket = socket(AF_INET, SOCK_STREAM)
+        self.socket.bind(self.address)
+        self.socket.listen(16)
+        if self.ssl:
+            self.wrap()
+        th = Thread(target=self.run,daemon=True)
+        th.start()
+        self.running = True
+    def set(self,ip,port):
+        self.ip = ip
+        self.port = port
+        self.address = (ip,port)
+        self.addr = '%s:%s'%(ip,port)
+
+    def wrap(self,cert='mycert.pem')->None:
+        self.socket = wrap_socket(self.socket,certfile=cert,keyfile='mycert.key',server_side=True)
+
+    def run(self)->None:
+        while True:
+            try:
+                # 阻塞，等待客户端连接，当 Server 关闭时，会抛出异常
+                skt, address = self.socket.accept()
+            except Exception as e:
+                print(str(e))
+                return
+            # 加入连接池5
+            if not ip_pool.get(address[0]):
+                ip_pool[address[0]] = IP(address[0])
+            client = Client(skt, address)
+            conn_pool.append(client)
+            # 同一IP连接数大于16则拒绝连接
+            if ip_pool[address[0]].conn > 32:
+                client.close()
+                continue
+            # 子线程：对每个连接的数据进行处理, args=tuple(arg1, arg2, ... , )
+            thread = Thread(target=self.handle, args=(client,))
+            # 设置成守护线程
+            thread.setDaemon(True)
+            thread.start()
+
+    def close(self)->None:
+        if self.running:
+            self.socket.close()
+            self.running = False
 
 
 def Kill(proc, timeout, client) -> None:
@@ -721,7 +788,7 @@ def getFile(loc, head=False, rang='', pETag='', token='') -> bytes:
         elif head:
             resp = pack(res='HTTP/1.1 200 OK', header=header)
         else:
-            if rang:  # 只接受一组值，多组的特喵的自己再请求一次...别改这里，下大文件很容易出错
+            if rang:  # 只接受一组值，多组的特喵的自己再请求一次
                 rang = rang.split(', ')[0].split('-')
                 se = [0,0,0]
                 if rang[0] == '':
@@ -780,8 +847,8 @@ def accept_client() -> None:
     # 线程1：监听连接
     while True:
         try:
-            # 阻塞，等待客户端连接，当 socket_server 关闭时，会抛出异常
-            skt, address = socket_server.accept()
+            # 阻塞，等待客户端连接，当 Server 关闭时，会抛出异常
+            skt, address = Server.accept()
         except:
             return
         # 加入连接池
@@ -950,7 +1017,7 @@ def message_handle(client:'Client') -> None:
                 wh = ImageGrab.grab().size
                 resp = pack(res='HTTP/1.1 200 OK', data=f'{wh[0]},{wh[1]}')
             else:
-                resp = getFile(head['path'], rang=head.get('Range'), pETag=head.get('If-None-Match'), token=head.get('token'))
+                resp = getFile(head['path'], rang=head.get('Range',''), pETag=head.get('If-None-Match',''), token=head.get('token',''))
         elif head['Method'].upper() == "POST":
             pt = head['path']
             if pt == ':host':
@@ -967,8 +1034,8 @@ def message_handle(client:'Client') -> None:
                 resp = successResp
             elif pt and head.get('Content-Type') == 'application/octet-stream':
                 # 加上Range: start-end,total
-                log("Post   File %-16s %s" %
-                    (head['Content-Length'], pt))
+                lt = int(head.get('Content-Length',0))
+                if lt>0: log("Post   File %-16s %s" % (lt, pt))
                 start = int(head.get('Start', 0))
                 f = None
                 try:
@@ -1036,8 +1103,9 @@ def message_handle(client:'Client') -> None:
                             log('\033[35mcmd\033[0m    no return             '+cmds)
                             try:
                                 proc = Popen(cmd, shell=True, bufsize=0, stdout=PIPE, stderr=PIPE, encoding='utf-8')
-                                # 
                                 Pipes.append(proc)
+                                if 'N_m3u8DL-CLI' in cmd:
+                                    M3U8.append(proc)
                                 # 默认等待2s，如果结束了就返回结果
                                 sleep(2)
                                 dat = ''
@@ -1179,7 +1247,7 @@ def maintain() -> None:
                         Sub = 1
             except:
                 pass
-        sleep(120)
+        sleep(60)
         now = time()
         if now - C.last > 290:
             C.update()
@@ -1207,6 +1275,22 @@ def maintain() -> None:
         for i in w:
             C.tokens.pop(i)
 
+
+def Nm3u8():
+    while True:
+        sleep(10)
+        i = len(M3U8)
+        while i>0:
+            i-=1
+            try:
+                r = M3U8[i].stdout.read()
+            except:pass
+            if M3U8[i].poll()!=None:
+                s = M3U8[i].args
+                s = s[s.find('--saveName "')+12:]
+                s = s[:s.find('" -')]
+                log('%-7s%-22s%s'%('m3u8', 'Task Done',s))
+                M3U8.pop(i)
 
 def Manage(cmd):
     f = ''
@@ -1343,8 +1427,8 @@ def Manage(cmd):
         return f'Killed Pipes[{p+1}]'
 
 
-def close() -> None:
-    socket_server.close()
+def close(a=0,b=None) -> None:
+    Server.close()
     C.save()
     log(f'Server {C.addr} closed.')
     if Win:
@@ -1365,17 +1449,31 @@ def close() -> None:
 
 
 def thshow():
-    with keyboard.GlobalHotKeys({'<ctrl>+<shift>+p': showTM}) as h:
+    with keyboard.GlobalHotKeys({'<ctrl>+<shift>+\\': showTM}) as h:
         h.join()
 
 
 def thquit():
     with keyboard.GlobalHotKeys({'<ctrl>+<shift>+q': close}) as h:
         h.join()
-
+def soc_exc(s,e:Exception):
+    log(ERR + str(e))
+    try:
+        s.socket = socket(AF_INET, SOCK_STREAM)  # 创建 socket 对象
+        p = input('Try another port number: ')
+        if p.isdigit():
+            p = int(p)
+            C.address = (C.address[0], p)
+            s.set(C.address[0],p)
+            s.bind()
+        else:
+            raise ValueError('Port is not an invalid number([0-65535])!')
+    except Exception as e1:
+        log(ERR+str(e1))
+        _exit(0)
 
 def init():
-    global socket_server, AutoCloseSub, Pipes, CHAT, SL
+    global Server, Servers, AutoCloseSub, Pipes, CHAT, SL
     print('\033[1;33mPython Server\033[0m         Version: '+VER)
     for i in range(len(argv)):
         if i == 0:
@@ -1389,46 +1487,25 @@ def init():
     C.load()
     C.update()
     C.Task()
-    try:
-        socket_server = socket(AF_INET, SOCK_STREAM)  # 创建 socket 对象
-        socket_server.bind(C.address)
-        socket_server.listen(16)  # 等待未处理请求数（有很多人理解为最大连接数，其实是错误的）
-    except Exception as e1:
-        log(ERR + str(e1))
-        try:
-            socket_server = socket(AF_INET, SOCK_STREAM)  # 创建 socket 对象
-            p = input('Try another port number: ')
-            if p.isdigit():
-                C.address = (C.address[0], int(p))
-                socket_server.bind(C.address)
-                socket_server.listen(16)
-            else:
-                raise ValueError('Port is not an invalid number([0-65535])!')
-        except Exception as e:
-            log(ERR+str(e))
-            return
+    Server = MyServer('0.0.0.0',80,soc_exc,message_handle)
+    if not Server.running:
+        return
+    C.addr = f'{C.address[0]}:{C.address[1]}'
     if Win:
         ShowWindow(TM, 0)
-        system('start http://localhost/')
-    C.addr = f'{C.address[0]}:{C.address[1]}'
+        # system('start http://localhost:'+str(C.address[1]))
     hostname = gethostname()
     ip_address = gethostbyname(hostname)
     print(strftime('Date: %Y/%m/%d %a'), ' IP:', ip_address)
     log('\033[33mServer \033[1;33m%-21s \033[0mstarted at \033[33m%s\033[0m' %
         (C.addr, Local))
     if Win: system('title Server '+C.addr+' '+Local)
-    # 线程1：监听连接
-    thread1 = Thread(target=accept_client, daemon=True)
-    thread1.start()
-    # 线程2：维护回收
-    thread2 = Thread(target=maintain, daemon=True)
-    thread2.start()
+    Thread(target=maintain, daemon=True).start()
+    Thread(target=Nm3u8).start()
     sleep(1)
     if Win:
-        thread3 = Thread(target=thquit, daemon=True)
-        thread3.start()
-        thread4 = Thread(target=thshow, daemon=True)
-        thread4.start()
+        Thread(target=thquit, daemon=True).start()
+        Thread(target=thshow, daemon=True).start()
     # 线程3：终端输入
     try:
         while True:
@@ -1456,6 +1533,8 @@ for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
 C = Cfg()
 if len(argv)>1 and argv[1]=='-r':C.restart()
 CHAT = Chat()
+if Win: SetConsoleCtrlHandler(close,True)
+else: signal(SIGINT,close) # ctrl + C
 
 if __name__ == '__main__':
     init()
