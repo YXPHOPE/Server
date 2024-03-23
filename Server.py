@@ -1,4 +1,4 @@
-VER = '1.1.9' # 必须是3个整数由2个点隔开
+VER = '1.1.10' # 必须是3个整数由2个点隔开
 PWD = '123456'
 from requests import get, post  # 其实可以用socket，但我不想弄SSL
 from os import getcwd, system, rename, remove, path, chdir, makedirs, scandir, _exit, execlp

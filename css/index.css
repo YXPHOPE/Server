@@ -128,7 +128,7 @@ div#file-container.collapse {
   border-radius: 0;
 }
 .folder::before {
-  content: "📁";
+  content: "\1F4C1"; /* 📁 &#128193; */
   margin-right: 2px;
   opacity: 0.7;
 }
