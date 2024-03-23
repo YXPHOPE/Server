@@ -259,7 +259,7 @@ div#show-content > div#curfile > a:hover {
   height: fit-content;
 }
 #header > div > * {
-  padding: 5px 8px;
+  margin: 5px 8px;
   width: fit-content;
   height: fit-content;
   cursor: pointer;
@@ -1072,4 +1072,16 @@ input#ndpwd+input {
 
 #board button:hover {
   background: aqua;
+}
+div#srt {
+  position: absolute;
+  text-align: center;
+  left: 50%;
+  top: 80%;
+  transform: translate(-50%,-50%);
+  letter-spacing: 1px;
+  font: 700 22px/28px Microsoft-Yahei;
+  color: white;
+  -webkit-text-stroke-color: black;
+  -webkit-text-stroke-width: 0.75px;
 }

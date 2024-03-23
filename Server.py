@@ -520,7 +520,6 @@ class MyServer:
                 # 阻塞，等待客户端连接，当 Server 关闭时，会抛出异常
                 skt, address = self.socket.accept()
             except Exception as e:
-                print(str(e))
                 return
             # 加入连接池5
             if not ip_pool.get(address[0]):
@@ -872,7 +871,6 @@ def message_handle(client:'Client') -> None:
     # 循环等待请求
     msg = 'Unknown Error'
     trc = ''
-    wsl = (0, 0)
     while client.open:
         resp = b''
         # 接收数据头head与数据主体data
@@ -883,10 +881,11 @@ def message_handle(client:'Client') -> None:
         # 根据请求头的长度及时跳出循环，防阻塞
         buf = Buffer
         lenth = 0x7FFFFFFF
+        wsl = (0, 0)
         try:
             while l <= lenth:
                 rec = client.socket.recv(buf)
-                if client.ws:
+                if client.ws and wsl[1]==0:
                     wsl = getLen(rec[:10])
                     lenth = wsl[0]+wsl[1]
                 elif len(rec) == 0:
@@ -936,7 +935,8 @@ def message_handle(client:'Client') -> None:
                             xy = dat.get('xy')
                             key = dat.get('key')
                             if xy:
-                                xy = (xy[0], xy[1])
+                                if xy[0]==None:xy=(0,0)
+                                else:xy = (xy[0], xy[1])
                             if typ == 'move':
                                 Mouse.position = xy
                             elif typ == 'click':
@@ -1008,7 +1008,9 @@ def message_handle(client:'Client') -> None:
                         wave.open(WAV, 'wb')
                     elif tp == ':chat':
                         CHAT.con(client.address, client)
-                    key = head.get('Sec-WebSocket-Key').encode()+Magic
+                    k = head.get('Sec-WebSocket-Key')
+                    if not k: k = head.get('Sec-Websocket-Key')
+                    key = k.encode()+Magic
                     key = b64encode(sha1(key).digest())
                     resp = b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nServer: WebSocket++/0.7.0\r\nSec-WebSocket-Accept: '+key+b'\r\n\r\n'
                 else:
@@ -1257,7 +1259,7 @@ def maintain() -> None:
                 Files[i]['file'].close()
                 w.append(i)
         for i in w:
-            log('\033[33mFile   \033[0m%-21s \033[0m%s' % ('closed', i))
+            # log('\033[33mFile   \033[0m%-21s \033[0m%s' % ('closed', i))
             Files.pop(i)
         w = []
         for i in ip_pool:
